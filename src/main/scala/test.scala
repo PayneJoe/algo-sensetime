@@ -129,14 +129,7 @@ object test {
     val ret = max(z,tt)
     println(ret)
 
-    val l = List(0,2)
-    val sm = ret(::,l)
-    println(sm)
-    val sm0 = sm.toDenseMatrix
-
-    println(sum(ret(::,l)))
-    println(sum(sm0(::,*)))
-    println(sum(sm))
+    println(ret(1,::))
 
   }
 }
