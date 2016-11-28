@@ -1,8 +1,9 @@
 /**
+  * Created by yuanpingzhou on 11/7/16.
+  *
   * ftrl algorithm applied in logic regression
   * @ update function : w(t + 1) = sum(w(1...t))/t - alpha * (sum(grad(1...t))/t + regPara * w(t))
   *   demonstrate that the newer w won't be too far away from previous points and the direction shall not be out of previous directions
-  * Created by yuanpingzhou on 11/7/16.
   */
 
 package com.sensetime.ad.algo.ctr

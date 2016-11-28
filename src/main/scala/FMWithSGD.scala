@@ -1,11 +1,11 @@
 /**
-  * parallel sgd algorithm applied in factorization machine
   * Created by yuanpingzhou on 10/19/16.
+  *
+  * parallel sgd algorithm applied in factorization machine
 */
 package com.sensetime.ad.algo.ctr
 
 object FMWithSGD {
-
   import org.apache.spark.SparkContext
   import org.apache.spark.SparkConf
   import org.apache.spark.rdd.RDD
