@@ -64,26 +64,11 @@ object test {
         println(r.toVector)
     }
     */
-    val rand = breeze.stats.distributions.Gaussian(0, 0.1)
-    val arr = Array(1,2,3,4,5,6,7,8)
-    var w = BDM(arr)
-    w = w.reshape(4,2).t.toDenseMatrix
-    println(w)
-    val w1 = w(::,0 to 0)
-    val w2 = w(::,2 to (w.cols - 1))
 
-    val w3 = BDM.horzcat(w1,w2)
-    println(w3)
-
-    val a1 = BDV(1.0, 2.0, 3.0)
-    val a2 = BDV(0.6, 0.2, 0.8)
-    val a3 = BDV.vertcat(a1, a2)
-    println(a3)
-
-    val pair = a1.toArray.zip(a2.toArray)
-    val sortedPair = pair.sortBy(_._2)
-    println(sortedPair.toVector)
-    println(sortedPair.slice(0,3).toVector)
+    val dm = BDM((10,20,30,40,50),(60,70,80,90,100))
+    val idx = (0 to 0).++((2 to (dm.cols - 1)))
+    println(dm)
+    println(dm(::,idx))
 
 
   }
