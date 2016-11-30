@@ -16,6 +16,8 @@ object FMWithFTRL {
 
   import java.io._
 
+  import com.sensetime.ad.algo.utils._
+
   def computePredict(x: BDV[Double],w: (Double,BDV[Double],BDM[Double])): Double ={
 
     val xa = x.toDenseVector.asDenseMatrix
@@ -47,7 +49,7 @@ object FMWithFTRL {
     (1.0 * hit) / predict.length
   }
 
-  def evaluate(w: (Double,BDV[Double],BDM[Double]),data_x: BDM[Double],data_y: BDV[Double]): Double = {
+  def evaluate(w: (Double,BDV[Double],BDM[Double]),data_x: BDM[Double],data_y: BDV[Double],mode: String): Double = {
 
     val rows = data_x.rows
     val cols = data_x.cols
@@ -60,7 +62,13 @@ object FMWithFTRL {
       i += 1
     }
 
-    val ret = computeAccuracy(predict,data_y)
+    var ret = 0.0
+    if(mode == "accuracy") {
+      ret = computeAccuracy(predict, data_y)
+    }
+    else if(mode == "auc"){
+      ret = Metrics.computeAuc(predict,data_y)
+    }
     ret
   }
 
@@ -172,7 +180,7 @@ object FMWithFTRL {
       val acc = (1.0 * hit) / (i + 1)
       lossSum += loss
       val l = lossSum/(i + 1)
-      println(s"iteration ${i} accuracy : ${acc} loss : ${l}")
+      //println(s"iteration ${i} accuracy : ${acc} loss : ${l}")
 
       // for  bias part
       val sg0 = grad._1 * grad._1
@@ -206,9 +214,11 @@ object FMWithFTRL {
       ssg2 += sg2
       ssn2 += sn2
 
-      //TODO print learning rate per ieteration
-      val ss = (sqrt(ssg2) :- sqrt(ssg2 :- sg2)) :/ alpha._3
-      println(ss.toDenseVector.slice(0,100))
+      // evaluation
+      if((i % 10) == 0){
+        val metric = evaluate((w0,w1,w2),valid_x,valid_y,"auc")
+        println(s"iteration ${i} metric[auc] ${metric}")
+      }
 
       i += 1
     }

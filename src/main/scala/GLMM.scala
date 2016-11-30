@@ -17,44 +17,7 @@ object GLMM {
 
   import scala.collection.mutable.{ArrayBuffer,HashMap}
 
-  /*
-    * compute grad with old score
-    * loss = log(1.0 + exp(-y * score))
-   */
-  def computeGrad(x: BDV[Double],y: Double,score: Double): BDV[Double] = {
-
-    val oldScore = score
-    val enys = exp(-1.0 * y * oldScore)
-    val mult = (-1.0 * y * enys) / (1.0 + enys)
-    val grad = mult :* x
-
-    grad
-  }
-
-  /*
-    * gradient descent update : w(t + 1) = w(t) - alpha * (grad + reg)
-   */
-  def updateFixedEffectModel(oldModel: BDV[Double],lr: Double,t: Int,grad: BDV[Double],lambda: Double): BDV[Double] = {
-
-    // regular part
-    val regVal = lambda :* oldModel
-    // step size
-    val stepSize = lr/sqrt(1.0 * t)
-    // gradient descent
-    val newModel = oldModel :- (stepSize :* (grad :+ regVal))
-
-    newModel
-  }
-
-  /*
-  * exponential loss : log(1.0 + exp(-y * predict))
-   */
-  def expLoss(y_truth: BDV[Double],y_predict: BDV[Double]): Double = {
-
-    val ret = log(1.0 :+ exp(-1.0 :* (y_truth :* y_predict)))
-
-    (ret.sum / ret.length)
-  }
+  import com.sensetime.ad.algo.utils._
 
   /*
    * compute predict , need to be optimized
@@ -89,36 +52,6 @@ object GLMM {
     score
   }
 
-  /*
-   *  compute auc
-   */
-  def computeAuc(predict: BDV[Double],groundTruth: BDV[Double]): Double = {
-
-    // retrieve number of positive and negative samples in ground truth
-    val nPos = groundTruth.toArray.filter(_>0).length
-    val nNeg = groundTruth.toArray.filter(_<=0).length
-
-    // tuple predict with ground truth , and sort with predict
-    val pair = predict.toArray.zip(groundTruth.toArray)
-    val sortedPair = pair.sortBy(_._1)
-    var auc = 0.0.toDouble
-    val x = BDV.zeros[Double](predict.length + 1)
-    val y = BDV.zeros[Double](predict.length + 1)
-    x(0) = 1.0
-    y(0) = 1.0
-
-    // calculate auc incrementally
-    var i = 1.toInt
-    while(i < sortedPair.length) {
-      y(i) = (1.0 * sortedPair.slice(i,pair.length).filter(_._2 > 0).length) / nPos
-      x(i) = (1.0 * sortedPair.slice(i,pair.length).filter(_._2 <= 0).length) / nNeg
-      auc = auc + (((y(i) + y(i - 1))*(x(i - 1) - x(i)))/2.0)
-      i += 1
-    }
-    auc = auc + ((y(i - 1) * x(i - 1))/2.0)
-
-    auc
-  }
 
   /*
     * performance metrics for mixed model
@@ -128,17 +61,16 @@ object GLMM {
 
     val y_true = BDV(data.map(x => x._2.label).collect())
     val y_predict = BDV((predict(data,fixedEffectModel,randomEffectType,randomEffectModel).collect()))
-    //println((1.0 * y_predict.toArray.filter(_>0).length)/y_predict.length)
     var ret = 0.0.toDouble
     if (mode == "exploss") {
-      ret = expLoss(y_true, y_predict)
+      ret = Metrics.expLoss(y_true, y_predict)
     }
     else if(mode == "accuracy"){
       val y_sign = signum(y_predict)
       ret = (y_sign :* y_true).toArray.filter(_>0).sum / y_true.length
     }
     else if(mode == "auc"){
-      ret = computeAuc(y_predict,y_true)
+      ret = Metrics.computeAuc(y_predict,y_true)
     }
 
     ret
@@ -157,7 +89,7 @@ object GLMM {
             val y = lp.label
             val x = lp.features
             val s = score
-            localGradSum = localGradSum :+ computeGrad(BDV(x.toArray),y,s)
+            localGradSum = localGradSum :+ Optimization.computeGradForExpLoss(BDV(x.toArray),y,s)
             cnt += 1.toInt
         }
         Iterator.single(localGradSum,cnt)
@@ -166,18 +98,6 @@ object GLMM {
       (g0 :+ g1,c0 + c1)
     }
     (gradSum,nInstance)
-  }
-
-  /*
-   * gradient descent updater
-   */
-  def updater(model: BDV[Double],alpha: Double,grad: BDV[Double],lambda: Double,idx: Int): BDV[Double] = {
-
-    val stepSize = alpha/sqrt(idx)
-    val regVal = lambda :* model
-    val newModel = model :- (stepSize :* (grad :+ regVal))
-
-    newModel
   }
 
   /*
@@ -195,9 +115,9 @@ object GLMM {
       case (uid,(lp,score)) =>
         val x = BDV(lp.features.toArray)
         val y = lp.label
-        val grad = computeGrad(x,y,score)
+        val grad = Optimization.computeGradForExpLoss(x,y,score)
 
-        model = updater(model,alpha,grad,lambda,i + 1)
+        model = Optimization.gradientDescentUpdateWithL2(model,alpha,grad,lambda,i + 1)
 
         // update new score for each instance
         // s(t + 1) = s - x * r + x * r'
@@ -218,10 +138,6 @@ object GLMM {
   def computeEffect(x: BDV[Double],randomEffectType: Int,fixedEffectModel: BDV[Double],
                     randomEffectModel: HashMap[Int,BDV[Double]]): Double = {
 
-    /*val x_1 = x(0 to (randomEffectType - 2))
-    val x_2 = x(randomEffectType to x.length - 1)
-    val rex = BDV.vertcat(x_1,x_2)
-    */
     val remainedIndex = ((0 to (randomEffectType - 2)).++((randomEffectType to (x.length - 1))))
     val rex = x(remainedIndex)
     val reid = x(randomEffectType - 1).toInt
@@ -237,7 +153,7 @@ object GLMM {
    */
   def trainGLMMWithLR(sc: SparkContext,trainRdd: RDD[(Long,LabeledPoint)],validateRdd: RDD[(Long,LabeledPoint)],nFeat: Int,
                       randomEffectType: Int,randomEffectId: Array[Int],iter: Int,alpha: (Double,Double),
-                      lambda: (Double,Double)): (BDV[Double],Array[(Int,BDV[Double])]) ={
+                      lambda: (Double,Double),metric: String): (BDV[Double],Array[(Int,BDV[Double])]) ={
 
     var train = trainRdd
 
@@ -292,7 +208,7 @@ object GLMM {
       // stage 2 : aggregate gradient from each fixed effect partition/node and figure out the new fixed model in master node
       val (gradSum,nInstance) = aggregateGrad(trainWithScore,nFeat)
       val grad = gradSum :/ nInstance.toDouble
-      val newFixedEffectModelGlobal = updateFixedEffectModel(fixedEffectModelGlobal,alpha._1,i + 1,grad,lambda._1)
+      val newFixedEffectModelGlobal = Optimization.gradientDescentUpdateWithL2(fixedEffectModelGlobal,alpha._1,grad,lambda._1,i + 1)
 
       // stage 3 : broadcast newly fixed effect model with older fixed effect model back to all fixed effect partitions/nodes
       //           and update score
@@ -348,8 +264,8 @@ object GLMM {
       scoreGlobal = newRandomEffectModelAndScore.flatMap(v => v._2._2)
 
       // evaluate metrics including exploss , accuracy , auc
-      val metric = evaluate(validateRdd,fixedEffectModelGlobal,randomEffectType,randomEffectModel.collect(),"auc")
-      println(s"iteration ${i}   metric[AUC] : ${metric}")
+      val e = evaluate(validateRdd,fixedEffectModelGlobal,randomEffectType,randomEffectModel.collect(),metric)
+      println(s"iteration ${i}   metric[accuracy] : ${e}")
 
       i += 1
     }
@@ -382,32 +298,9 @@ object GLMM {
     (minSparsityFeatId,maxFeatureId)
   }
 
-  /*
-    * transform raw data into LablePoint format with index
-   */
-  def formatData(data: RDD[String],nFeat: Int): RDD[(Long,LabeledPoint)] = {
-    val formated: RDD[LabeledPoint] = data.map{
-      line =>
-        val tokens = line.trim.split(" ", -1)
-        val label = tokens(0).toInt
-        var features: BDV[Double] = BDV.zeros(nFeat)
-        tokens.slice(1, tokens.length).map {
-          x =>
-            val hit: Int = x.split(":", -1)(0).toInt
-            features.update(hit - 1, 1.toDouble)
-        }
-        LabeledPoint(label, Vectors.dense(features.toArray))
-    }
-    val formatedWithIndex = formated.zipWithIndex().map{
-      case (lp,index) =>
-        (index,lp)
-    }
-    formatedWithIndex
-  }
-
   def main(args: Array[String]): Unit = {
-    if (args.length < 9) {
-      println("params : Mode[local|yarn] trainFile validateFile OutputDir iteration alpha0 alpha1 lambda0 lambda1")
+    if (args.length < 10) {
+      println("params : Mode[local|yarn] trainFile validateFile OutputDir iteration alpha0 alpha1 lambda0 lambda1 metric[accuracy|exploss|auc]")
       System.exit(1)
     }
 
@@ -421,6 +314,7 @@ object GLMM {
     val alpha1 = args(6).toDouble
     val lambda0 = args(7).toDouble
     val lambda1 = args(8).toDouble
+    val metric = args(9)
 
     // spark environment
     val conf = new SparkConf().setMaster(mode).setAppName("GLMM")
@@ -436,15 +330,15 @@ object GLMM {
     println(s"Selected random effect is ${randomEffectType} , the size of feature space is ${nFeat}")
 
     // transform raw data into LabelPoint format
-    val trainRdd = formatData(trainRawData, nFeat)
-    val validateRdd = formatData(validateRawData,nFeat)
+    val trainRdd = Data.formatData(trainRawData, nFeat)
+    val validateRdd = Data.formatData(validateRawData,nFeat)
     //val ins = trainRdd.lookup(3)(0)
     //println(ins.label, ins.features)
 
     // there's only two random effect id ,as it's encoded with one-hot
     val randomEffectId = Array[Int](0,1)
     //
-    val model = trainGLMMWithLR(sc,trainRdd,validateRdd,nFeat,randomEffectType,randomEffectId,iter,(alpha0,alpha1),(lambda0,lambda1))
+    val model = trainGLMMWithLR(sc,trainRdd,validateRdd,nFeat,randomEffectType,randomEffectId,iter,(alpha0,alpha1),(lambda0,lambda1),metric)
 
   }
 }
