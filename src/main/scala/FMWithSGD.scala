@@ -19,6 +19,8 @@ object FMWithSGD {
 
   import scala.collection.mutable.ArrayBuffer
 
+  import com.sensetime.ad.algo.utils._
+
   implicit def toBreeze(v: SparkV): BV[Double] = {
     /** Convert a spark.mllib.linalg vector into breeze.linalg.vector
       * We use Breeze library for any type of matrix operations because mllib local linear algebra package doesn't have any support for it (in Spark 1.4.1)
@@ -81,16 +83,16 @@ object FMWithSGD {
     ret
   }
 
-  def evaluate(data: RDD[LabeledPoint], w0: Double,w1: BDV[Double],w2: BDM[Double],regParams: Array[Double],method: String): Double = {
+  def evaluate(data: RDD[LabeledPoint], w0: Double,w1: BDV[Double],w2: BDM[Double],regParams: Array[Double],method: String): (Double,Double) = {
     val y_true = BDV(data.map{lp => lp.label}.collect())
     val y_pred = BDV(predictFM(data, w0,w1,w2).collect())
-    //println(y_pred.toArray.toVector)
-    var ret = 0.0
-    if(method == "loss")
-      ret = computeLoss(y_pred,y_true,regParams,w0,w1,w2)
-    else
-      ret = computeAccuracy(y_pred.toArray,y_true.toArray)
-    ret
+    var ret1 = 0.0
+    if(method == "exploss")
+      ret1 = Metrics.expLoss(y_true,y_pred)
+    else if(method == "accuracy")
+      ret1 = computeAccuracy(y_pred.toArray,y_true.toArray)
+    val ret2 = Metrics.computeAuc(y_pred,y_true)
+    (ret1,ret2)
   }
 
   def computeAccuracy(predict: Array[Double], truth: Array[Double]): Double = {
@@ -227,13 +229,13 @@ object FMWithSGD {
 
       //
       if(verbose == true) {
-        val p1 = evaluate(train, W0,W1,W2,regParams,"loss")
+        //val p1 = evaluate(train, W0,W1,W2,regParams,"loss")
         val p2 = evaluate(valid, W0,W1,W2,regParams,"accuracy")
-        validationList.append((p1,p2))
+        //validationList.append((p1,p2))
       }
       i += 1
     }
-    validationList.map(pair => println(s"train : ${pair._1}  validate : ${pair._2}"))
+    //validationList.map(pair => println(s"train : ${pair._1}  validate : ${pair._2}"))
     (W0,W1,W2)
   }
 
@@ -259,6 +261,8 @@ object FMWithSGD {
     val lossHistoryList = new ArrayBuffer[(Double,Double)](iterations)
     train = train.repartition(4)
     while(i <= iterations){
+      val startTime = System.currentTimeMillis()
+
       //
       val bcWeights0 = train.context.broadcast(W0)
       val bcWeights1 = train.context.broadcast(W1)
@@ -318,20 +322,21 @@ object FMWithSGD {
 
       //val loss = (1.0 * lossSum / _cnt) + regVal
       //lossHistoryList.append(loss)
-      val p1 = evaluate(train, W0,W1,W2,regParams,"accuracy")
-      val p2 = evaluate(valid, W0,W1,W2,regParams,"accuracy")
-      lossHistoryList.append((p1,p2))
+      val e = evaluate(valid, W0,W1,W2,regParams,"accuracy")
+      val endTime = System.currentTimeMillis()
+      val timeVal = (endTime - startTime) * 0.001
+
+      println(f"iteration ${i}  metric[accuracy] ${e._1}%.3f  metric[auc] ${e._2}%.3f time elapse ${timeVal}%.3f(s)")
 
       W0 = newW0
       W1 = newW1
       W2 = newW2
 
-      //println(W2.toDenseVector)
       regVal = _regVal.sum
 
       i += 1
     }
-    lossHistoryList.map(loss => println(s" train accuracy : ${loss._1}  validate accuracy : ${loss._2}"))
+    //lossHistoryList.map(loss => println(s" train accuracy : ${loss._1}  validate accuracy : ${loss._2}"))
 
     (W0,W1,W2)
   }
@@ -409,6 +414,7 @@ object FMWithSGD {
 
     val conf = new SparkConf().setMaster(mode).setAppName("FMWithSGD") //.set("spark.executor.memory", "6g")
     val sc = new SparkContext(conf)
+    sc.setLogLevel("WARN")
 
     var rawRDD = sc.textFile(trainFile)
     println("Total records : " + rawRDD.count)
