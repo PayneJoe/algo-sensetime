@@ -12,24 +12,36 @@ object Optimization {
   import org.apache.spark.mllib.linalg.{Vectors, Vector => SparkV, SparseVector => SparkSV, DenseVector => SparkDV, Matrix => SparkM}
 
   /*
-  * compute grad with old score
-  * loss = log(1.0 + exp(-y * score))
+  * compute gradient
+  *
+  * exponential loss function is log(1.0 + exp(-y * score)) , gradient of which should be exp(-y * score) * -y * score' / (1 + exp(-y * score)
+  * logarithmic loss function is -1.0 * (y * log(p) + (1 - y) * log(1 - p)) , gradient of which should be -(y * p'/p - (1 - y) * p'/(1 - p))
  */
-  def computeGradForExpLoss(x: BDV[Double],y: Double,score: Double): BDV[Double] = {
+  def computeGradient(x: BDV[Double],y: Double,score: Double,lossType: String): (BDV[Double],Double) = {
 
-    val oldScore = score
-    val enys = exp(-1.0 * y * oldScore)
-    val mult = (-1.0 * y * enys) / (1.0 + enys)
-    val grad = mult :* x
+    var grad = BDV.zeros[Double](x.length)
+    var loss = 0.0
 
-    grad
+    if(lossType == "exp") {
+      val enys = exp(-1.0 * y * score)
+      val mult = (-1.0 * y * enys) / (1.0 + enys)
+      grad = mult :* x
+      loss = log(1.0 + enys)
+    }
+    else if(lossType == "log"){
+      grad = (score - y) :* x
+      loss = -1.0 * (y * log(score) + (1.0 - y) * log(1.0 - score))
+    }
+
+    (grad,loss)
   }
 
   /*
- * gradient descent updater
- * //stepSize(t) = 1.0 / ((1.0 / (1.0 + sqrt(sum_s{1..t-1}{g_s^2}))) - (1.0 / (1.0 + sqrt(sum_s{1..t}{g_s^2})))) + alpha/(sqrt(t))
- */
-  def gradientDescentUpdateWithL2(model: BDV[Double],alpha: Double,grad: BDV[Double],lambda: Double,idx: Int,sumGradSqure: BDV[Double]): BDV[Double] = {
+   * gradient descent updater with L2 regularization
+   *
+   */
+  def gradientDescentUpdate(model: BDV[Double],alpha: Double,grad: BDV[Double],lambda: Double,
+                            idx: Int,sumGradSqure: BDV[Double],regular: String): BDV[Double] = {
 
     val alpha_1 = 0.003
     val alpha_2 = 1.0
@@ -38,27 +50,21 @@ object Optimization {
     //val gradPart = (alpha_3 :+ sqrt(sumGradSqure :+ (grad :* grad)) :- sqrt(sumGradSqure)) :/ alpha_3
     val gradPart = alpha_3 :/ (1.0 :+ sqrt(grad :* grad)) //:/ sqrt(sumGradSqure :+ (grad :* grad))
     val timePart = alpha_3 / sqrt(idx)
-    val stepSize = gradPart
-    val regVal = lambda :* model
-    val newModel = model :- (stepSize :* (grad :+ regVal))
+    val stepSize = timePart
+
+    var newModel = BDV.zeros[Double](model.length)
+    if(regular == "l2") {
+      val regVal = lambda :* model
+      newModel = model :- (stepSize :* (grad :+ regVal))
+    }
+    else if(regular == "l1"){
+      val suggested = model :- (stepSize :* grad)
+      val prior = stepSize :* lambda
+
+      val zeroDenseVector = BDV.zeros[Double](model.length)
+      newModel = signum(suggested) :* max(zeroDenseVector,(abs(suggested) :- prior))
+    }
 
     newModel
   }
-
-  def gradientDescentUpdateWithL1(model: BDV[Double],alpha: Double,grad: BDV[Double],lambda: Double,idx: Int,sumGradSqure: BDV[Double]): BDV[Double] = {
-
-    val alpha_1 = 0.003
-    val alpha_2 = 1.0
-    val alpha_3 = alpha
-    val gradPart = alpha_3 :/ (1.0 :+ sqrt(grad :* grad)) //:/ sqrt(sumGradSqure :+ (grad :* grad))
-    val timePart = alpha_3 / sqrt(idx)
-    val stepSize = gradPart
-    val suggested = model :- (alpha :* grad)
-    val prior = alpha :* lambda
-    val z = BDV.zeros[Double](model.length)
-    val newModel = signum(suggested) :* max(z,(abs(suggested) :- prior))
-
-    newModel
-  }
-
 }

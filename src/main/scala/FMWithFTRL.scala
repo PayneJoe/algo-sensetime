@@ -67,7 +67,7 @@ object FMWithFTRL {
       ret = computeAccuracy(predict, data_y)
     }
     else if(mode == "auc"){
-      ret = Metrics.computeAuc(predict,data_y)
+      ret = Metrics.computeAuc(predict,data_y,"exp")
     }
     ret
   }

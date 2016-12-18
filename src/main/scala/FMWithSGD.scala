@@ -88,10 +88,10 @@ object FMWithSGD {
     val y_pred = BDV(predictFM(data, w0,w1,w2).collect())
     var ret1 = 0.0
     if(method == "exploss")
-      ret1 = Metrics.expLoss(y_true,y_pred)
+      ret1 = Metrics.computeLoss(y_true,y_pred,"exp")
     else if(method == "accuracy")
       ret1 = computeAccuracy(y_pred.toArray,y_true.toArray)
-    val ret2 = Metrics.computeAuc(y_pred,y_true)
+    val ret2 = Metrics.computeAuc(y_pred,y_true,"exp")
     (ret1,ret2)
   }
 
@@ -245,6 +245,8 @@ object FMWithSGD {
   def trainFM_parallel_sgd(sc: SparkContext, trainRDD: RDD[LabeledPoint], validRDD: RDD[LabeledPoint],iterations: Int = 50, alpha: Double = 0.01,
                           regParams: Array[Double] = Array(0,0,0.1), factorLength: Int = 4, verbose: Boolean = true):
                           (Double,BDV[Double],BDM[Double]) = {
+    val mode = "accuracy"
+
     var train = trainRDD
     var valid = validRDD
     train.cache()
@@ -322,11 +324,11 @@ object FMWithSGD {
 
       //val loss = (1.0 * lossSum / _cnt) + regVal
       //lossHistoryList.append(loss)
-      val e = evaluate(valid, W0,W1,W2,regParams,"accuracy")
+      val e = evaluate(valid, W0,W1,W2,regParams,mode)
       val endTime = System.currentTimeMillis()
       val timeVal = (endTime - startTime) * 0.001
 
-      println(f"iteration ${i}  metric[accuracy] ${e._1}%.3f  metric[auc] ${e._2}%.3f time elapse ${timeVal}%.3f(s)")
+      println(f"iteration ${i}  metric[${mode}] ${e._1}%.3f  metric[auc] ${e._2}%.3f time elapse ${timeVal}%.3f(s)")
 
       W0 = newW0
       W1 = newW1

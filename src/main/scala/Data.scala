@@ -15,12 +15,21 @@ object Data {
   /*
   * transform raw data into LablePoint format with index
  */
-  def formatData(data: RDD[String],nFeat: Int): RDD[(Long,LabeledPoint)] = {
+  def formatData(data: RDD[String],nFeat: Int,mode: String): RDD[(Long,LabeledPoint)] = {
     val formated: RDD[LabeledPoint] = data.map{
       line =>
         val tokens = line.trim.split(" ", -1)
-        val label = tokens(0).toInt
-        var features: BDV[Double] = BDV.zeros(nFeat)
+        var label: Double = 0.0
+        if(mode == "exp") {
+          label = tokens(0).toDouble
+        }
+        else if(mode == "log"){
+          label = 0.0
+          if(tokens(0).toDouble > 0){
+            label = 1.0
+          }
+        }
+        val features: BDV[Double] = BDV.zeros(nFeat)
         tokens.slice(1, tokens.length).map {
           x =>
             val hit: Int = x.split(":", -1)(0).toInt
