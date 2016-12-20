@@ -27,7 +27,7 @@ object ParallelizedLR {
   def computeScore(x: BDV[Double],model: BDV[Double],lossType: String): Double = {
 
     var score = x.dot(model)
-    if(lossType == "los"){
+    if(lossType == "log"){
       score = activate(score)
     }
 
@@ -131,6 +131,9 @@ object ParallelizedLR {
     }
   }
 
+  /*
+   * Compute gradient and loss at a certain (weight) point , average if in distributed situation
+   */
   private class CostFun(
                          data: RDD[(Long,LabeledPoint)],
                          regParam: Double,
@@ -194,6 +197,9 @@ object ParallelizedLR {
     }
   }
 
+  /*
+   * Train logistic regression with L-BFGS authored by Breeze
+   */
   def trainLRWithLBFGS(trainRdd: RDD[(Long,LabeledPoint)],validate: RDD[(Long,LabeledPoint)],maxNumIterations: Int = 100,
                        alpha: Double,lambda: Double, metric: String,regularType: String,lossType: String,
                        numCorrections: Int = 7,convergenceTol: Double = 1e-6) = {
