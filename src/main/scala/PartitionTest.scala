@@ -25,18 +25,18 @@ object PartitionTest {
     // will have the same partitioner as links
     var ranks = links.mapValues(v => 1.0)
 
-    println(links.getNumPartitions)
+    //println(links.getNumPartitions)
 
     // Run 10 iterations of PageRank
-    for (i <- 0 until 1) {
+    for (i <- 0 until 4) {
       val contributions = links.cogroup(ranks).flatMap {
         case (pageId, pair) =>
           val links = pair._1.head
           val rank = pair._2.head
           links.map(dest => (dest.toString, rank / links.size))
       }
-      println("========== " + contributions.getNumPartitions)
       ranks = contributions.reduceByKey((x, y) => x + y).mapValues(v => 0.15 + 0.85*v)
+      //println(ranks.collect())
     }
 
     // Write out the final ranks

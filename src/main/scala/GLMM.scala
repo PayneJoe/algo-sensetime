@@ -1,9 +1,5 @@
 package com.sensetime.ad.algo.ctr
 
-import breeze.numerics._
-
-import scala.collection.mutable
-
 /**
   * Created by yuanpingzhou on 11/23/16.
   *
@@ -17,7 +13,7 @@ object GLMM {
   import org.apache.spark.mllib.linalg.{Vectors, Vector => SparkV, SparseVector => SparkSV, DenseVector => SparkDV, Matrix => SparkM}
 
   import breeze.linalg.{Vector => BV, SparseVector => BSV, DenseVector => BDV, DenseMatrix => BDM, _}
-  import breeze.numerics.{sqrt,exp,signum,log}
+  import breeze.numerics.{sqrt,exp,signum,log,abs}
   import breeze.optimize.{CachedDiffFunction, DiffFunction, LBFGS => BreezeLBFGS}
 
   import scala.collection.mutable.{ArrayBuffer,HashMap}
@@ -25,41 +21,9 @@ object GLMM {
   import com.sensetime.ad.algo.utils._
 
   /*
-   * compute predict , need to be optimized
-   */
-  def computeScore(data: RDD[(Long,LabeledPoint)],fixedEffectModel: BDV[Double],randomEffectType: Int,
-              randomEffectModel: Array[(Int,BDV[Double])]): RDD[Double] = {
-
-    val _fixedEffectModel = fixedEffectModel
-    val _randomEffectModel = BDM.zeros[Double](randomEffectModel.length,randomEffectModel(0)._2.length)
-    var i = 0.toInt
-    while(i < randomEffectModel.length){
-      val x = randomEffectModel(i)._1
-      var j = 0.toInt
-      while(j < randomEffectModel(i)._2.length) {
-        _randomEffectModel.update(x,j,randomEffectModel(i)._2(j))
-        j += 1
-      }
-      i += 1
-    }
-
-    val score = data.map{
-      case (uid,lp) =>
-        val x = BDV(lp.features.toArray)
-        val x_1 = x(0 to (randomEffectType - 2))
-        val x_2 = x(randomEffectType to x.length - 1)
-        val xr = BDV.vertcat(x_1,x_2)
-        val reid = x(randomEffectType - 1).toInt
-        val y = lp.label
-        (x :* _fixedEffectModel).sum + (xr :* _randomEffectModel(reid,::).t).sum
-    }
-
-    score
-  }
-
-
-  /*
     * performance metrics for mixed model
+    *
+    * @return two metrics
    */
   def evaluate(data: RDD[(Long,LabeledPoint)],fixedEffectModel: BDV[Double],
                randomEffectType: Int,randomEffectModel: Array[(Int,BDV[Double])],mode: (String,String),lossType: String): (Double,Double) = {
@@ -68,7 +32,13 @@ object GLMM {
     var ret2 = .0
 
     val y_true = BDV(data.map(x => x._2.label).collect())
-    val y_predict = BDV((computeScore(data,fixedEffectModel,randomEffectType,randomEffectModel).collect()))
+    val y_predict = BDV(data.map{
+      case (uid,lp) =>
+        val x = BDV(lp.features.toArray)
+        val y = lp.label
+        val score = computeScore(x,randomEffectType,fixedEffectModel,randomEffectModel.toMap)
+        score
+    }.collect())
 
     if (mode._1 == "loss") {
       ret1 = Metrics.computeLoss(y_true, y_predict,lossType)
@@ -85,31 +55,6 @@ object GLMM {
   }
 
   /*
-    * aggregate gradients computed in individual partitions
-   */
-  def aggregateGrad(train: RDD[(Long,(LabeledPoint,Double))],nFeat: Int,lossType: String): (BDV[Double],Int) = {
-    val (gradSum,nInstance) = train.mapPartitions{
-      partition =>
-        var localGradSum = BDV.zeros[Double](nFeat)
-        var cnt = 0.toInt
-        partition.foreach{
-          case (_,(lp,score)) =>
-            val y = lp.label
-            val x = lp.features
-            val s = score
-            val (localGrad,_) = Optimization.computeGradient(BDV(x.toArray),y,s,lossType)
-            localGradSum = localGradSum :+ localGrad
-            cnt += 1.toInt
-        }
-        Iterator.single(localGradSum,cnt)
-    }.treeReduce{
-      case ((g0,c0),(g1,c1)) =>
-      (g0 :+ g1,c0 + c1)
-    }
-    (gradSum,nInstance)
-  }
-
-  /*
    * logicstic regression activate function
    */
   def activate(score: Double): Double ={
@@ -119,6 +64,7 @@ object GLMM {
   /*
     * update score with biased score
     *
+    * @return updated score
     * newScore = oldScore - x * oldModel + x * newModel
    */
   def updateScore(oldScore: Double,x: BDV[Double],oldModel: BDV[Double],newModel: BDV[Double],lossType: String): Double = {
@@ -134,6 +80,11 @@ object GLMM {
     newScore
   }
 
+  /*
+   * update fixed effect model with stochastic greadient descent
+   *
+   * @return updated model
+   */
   def updateFixedEffectModelWithSGD(data: RDD[(Long,(LabeledPoint,Double))],model: BDV[Double],
                                     alpha: Double,lambda: Double,regularType: String,lossType: String): BDV[Double] = {
 
@@ -178,9 +129,12 @@ object GLMM {
   }
 
   /*
-   * update random effect model for specific random effect id
+   * update random effect model for specific random effect id locally in a worker node
+   * both data and model are in the same node identified by random effect id
+   *
+   * @return updated random effect model and corresponding scores
    */
-  def updateRandomEffectModelWithSGD(trainRdd: Iterable[(Long,(LabeledPoint,Double))],oldModel: BDV[Double],
+  def updateRandomEffectModelWithSGD(data: Iterable[(Long,(LabeledPoint,Double))],oldModel: BDV[Double],
                               alpha: Double,lambda: Double,regularType: String,lossType: String): (BDV[Double],Iterable[(Long,Double)]) = {
 
     var lastModel = oldModel.copy
@@ -188,7 +142,8 @@ object GLMM {
     var i = 0.toInt
     // go through all samples with certain random effect id
     val sumGradSqureForRandom = BDV.zeros[Double](oldModel.length)
-    trainRdd.foreach{
+    // notice that data is not a RDD
+    data.foreach{
       case (uid,(lp,oldScore)) =>
         val x = BDV(lp.features.toArray)
         val y = lp.label
@@ -203,7 +158,7 @@ object GLMM {
         i += 1
     }
 
-    val s = trainRdd.map{
+    val s = data.map{
       case (uid,(lp,oldScore)) =>
         val x = BDV(lp.features.toArray)
         val y = lp.label
@@ -216,6 +171,11 @@ object GLMM {
     (newModel,s)
   }
 
+  /*
+   * cost function of L-BFGS for random effect
+   * parameters in cost function which are external variables will be used in calculate function
+   *
+   */
   private class CostFunForRandomEffect(
                          data: Iterable[(Long,(LabeledPoint,Double))],initialModel: BDV[Double],nInstance: Long,
                          regParam: Double,regularType: String,lossType: String
@@ -231,6 +191,7 @@ object GLMM {
           val x = BDV(lp.features.toArray)
           val y = lp.label
 
+          // update score with biased score computed though initial model
           val score = updateScore(initialScore,x,initialModel,model,lossType)
 
           val (localGrad,localLoss) = Optimization.computeGradient(x,y,score,lossType)
@@ -262,45 +223,56 @@ object GLMM {
     }
   }
 
-    def updateRandomEffectScore(data: Iterable[(Long,(LabeledPoint,Double))],newModel: BDV[Double],oldModel: BDV[Double]):
+  /*
+   * update random effect score locally in a worker node
+   * both data and model are in the same node
+   *
+   */
+  def updateRandomEffectScore(data: Iterable[(Long,(LabeledPoint,Double))],newModel: BDV[Double],oldModel: BDV[Double]):
                                       Iterable[(Long,Double)] = {
-      val updatedScore = data.map{
-        case (uid,(lp,score)) =>
-          val x = BDV(lp.features.toArray)
-          val newScore = score - (x :* oldModel).sum  + (x :* newModel).sum
-          (uid,newScore)
-      }
-      updatedScore
+    // notice that data is not a RDD
+    val updatedScore = data.map{
+      case (uid,(lp,score)) =>
+        val x = BDV(lp.features.toArray)
+        val newScore = score - (x :* oldModel).sum  + (x :* newModel).sum
+        (uid,newScore)
     }
+    updatedScore
+  }
 
-    def updateRandomEffectModelWithLBFGS(data: Iterable[(Long,(LabeledPoint,Double))],nInstance: Long, model: BDV[Double],
-                                          lambda: Double,regularType: String,lossType: String,
-                                          maxNumIterations: Int,numCorrections: Int,convergenceTol: Double):
-                                          (BDV[Double],Iterable[(Long,Double)]) = {
+  /*
+   * update random effect model with L-BFGS authored by the group of Breeze project
+   * @return updated model and corresponding scores
+   *
+   */
+  def updateRandomEffectModelWithLBFGS(data: Iterable[(Long,(LabeledPoint,Double))],nInstance: Long, model: BDV[Double],
+                                        lambda: Double,regularType: String,lossType: String,
+                                        maxNumIterations: Int,numCorrections: Int,convergenceTol: Double):
+                                        (BDV[Double],Iterable[(Long,Double)]) = {
 
-      val costFunForRandomEffect = new CostFunForRandomEffect(data,model,nInstance, lambda,regularType,lossType)
-      val lbfgsForRandomEffect = new BreezeLBFGS[BDV[Double]](maxNumIterations, numCorrections, convergenceTol)
+    val costFunForRandomEffect = new CostFunForRandomEffect(data,model,nInstance, lambda,regularType,lossType)
+    val lbfgsForRandomEffect = new BreezeLBFGS[BDV[Double]](maxNumIterations, numCorrections, convergenceTol)
 
-      // start work
-      val states = lbfgsForRandomEffect.iterations(new CachedDiffFunction(costFunForRandomEffect), model)
+    // start work
+    val states = lbfgsForRandomEffect.iterations(new CachedDiffFunction(costFunForRandomEffect), model)
 
-      var state = states.next()
-      while (states.hasNext) {
-        state = states.next()
-      }
-      val newModel = state.x
+    var state = states.next()
+    while (states.hasNext) {
+      state = states.next()
+    }
+    val newModel = state.x
+    val newScore = updateRandomEffectScore(data,newModel,model)
 
-      val newScore = updateRandomEffectScore(data,newModel,model)
-
-      (newModel,newScore)
+    (newModel,newScore)
   }
 
   /*
    *  compute effect score including fixed effect and random effect
    *  score = x * fixedEffectModel + x' * randomEffectModel
+   *
    */
-  def computeEffect(x: BDV[Double],randomEffectType: Int,fixedEffectModel: BDV[Double],
-                    randomEffectModel: HashMap[Int,BDV[Double]]): Double = {
+  def computeScore(x: BDV[Double],randomEffectType: Int,fixedEffectModel: BDV[Double],
+                    randomEffectModel: Map[Int,BDV[Double]]): Double = {
 
     val remainedIndex = ((0 to (randomEffectType - 2)).++((randomEffectType to (x.length - 1))))
     val rex = x(remainedIndex)
@@ -309,10 +281,14 @@ object GLMM {
     val randomEffect = (rex :* randomEffectModel.get(reid).get).sum
     val effect = fixedEffect + randomEffect
 
-    //println(s"${fixedEffect}\t${randomEffect}")
     effect
   }
 
+  /*
+   * cost function for fixed effect
+   * parameters in cost function which are external variables will be used in calculate function
+   *
+   */
   private class CostFunForFixedEffect(
                          data: RDD[(Long,(LabeledPoint,Double))],
                          initialModel: BDV[Double],
@@ -321,6 +297,9 @@ object GLMM {
                          regularType: String,
                          lossType: String
                        ) extends DiffFunction[BDV[Double]] {
+    /*
+     * parameter in calculate function get updated while iteration goes on
+     */
     override def calculate(model: BDV[Double]): (Double, BDV[Double]) = {
 
       val nFeat = model.length
@@ -336,6 +315,7 @@ object GLMM {
             val features = BDV(lp.features.toArray)
             val initialScore = ld._2
 
+            // update score with biased score computed through initial model
             val score = updateScore(initialScore,features,broadcastedInitialModel.value,broadcatedModel.value,broadcastedLossType.value)
 
             val (localGrad,localLoss) = Optimization.computeGradient(features,label,score,broadcastedLossType.value)
@@ -352,9 +332,11 @@ object GLMM {
       //  otherwise , error "Task not serializable" will occur , more information about this you can check :
       // 1. https://databricks.gitbooks.io/databricks-spark-knowledge-base/content/troubleshooting/javaionotserializableexception.html
       // 2. http://stackoverflow.com/questions/22592811/task-not-serializable-java-io-notserializableexception-when-calling-function-ou
+
+      // notice that data is not a RDD
       val (gradientSum, lossSum) = data.treeAggregate((zeroDenseVector, 0.0))(seqOp, combOp)
 
-      // broadcasted model is not needed anymore
+      // broadcasted models are not needed anymore
       broadcatedModel.destroy()
       broadcastedLossType.destroy()
 
@@ -377,12 +359,16 @@ object GLMM {
         regGrad = regParam * signum(model)
       }
       grad = (gradientSum :/ nInstance.toDouble) :+ regGrad
-      //println(grad)
 
       (loss,grad)
     }
   }
 
+  /*
+   * update fixed effect model with L-BFGS authored by group of Breeze project
+   * @return updated model
+   *
+   */
   def updateFixedEffectModelWithLBFGS(
                                        data: RDD[(Long,(LabeledPoint,Double))],nInstance: Long,
                                        model: BDV[Double],lambda: Double,regularType: String,lossType: String,
@@ -407,11 +393,14 @@ object GLMM {
   /*
     * train GLMM with logic regression while GLMM includes one fixed effect model and one random effect model
    */
-  def trainGLMMWithLR(sc: SparkContext,trainRdd: RDD[(Long,LabeledPoint)],validateRdd: RDD[(Long,LabeledPoint)],nFeat: Int,
+  def trainGLMMWithLR(sc: SparkContext,trainRdd: RDD[(Long,LabeledPoint)],validateRdd: RDD[(Long,LabeledPoint)],outputDir: String,nFeat: Int,
                       randomEffectType: Int,randomEffectId: Array[Int],iter: Int,alpha: (Double,Double),
                       lambda: (Double,Double),metric: (String,String),regularType: (String,String),lossType: (String,String),method: (String,String),
                       maxLBFGSIterNum: Int = 100,numCorrections: Int = 7,convergenceTol: Double = 1e-6):
                         (BDV[Double],Array[(Int,BDV[Double])]) ={
+
+    // checking point directory
+    sc.setCheckpointDir(outputDir)
 
     val nInstance = trainRdd.count()
     val train = trainRdd
@@ -436,7 +425,7 @@ object GLMM {
     randomEffectModel = randomEffectModel.partitionBy(randomEffectPartitioner).persist()
 
     // broadcast initialized fixed model and random effect model to each nodes , which will save a lot of cost for network I/O
-    val broadcastRandomEffectModelGlobal = train.context.broadcast(randomEffectModelGlobal)
+    val broadcastRandomEffectModelGlobal = train.context.broadcast(randomEffectModelGlobal.toMap)
     val broadcastFixedEffectModelGlobal = train.context.broadcast(fixedEffectModelGlobal)
     // initialize score for each record with initial fixed effect model and random effect model
     var scoreGlobal = train.mapPartitions {
@@ -448,10 +437,10 @@ object GLMM {
             val uid = record._1
             val lp = record._2
             val x = BDV(lp.features.toArray)
-            val score = computeEffect(x, randomEffectType, localFixedEffectModel, localRandomEffectModel)
+            val score = computeScore(x, randomEffectType, localFixedEffectModel, localRandomEffectModel)
             (uid, score)
         }
-    }
+    }.partitionBy(fixedHashPartitioner).persist()
     //broadcastFixedEffectModelGlobal.destroy()
     //broadcastRandomEffectModelGlobal.destroy()
 
@@ -466,11 +455,7 @@ object GLMM {
       val startTime = System.currentTimeMillis()
 
       // stage 1 : training data preparation for fixed effect model , both data and score are hashed by uid , and then join them together
-      scoreGlobal = scoreGlobal.partitionBy(fixedHashPartitioner)
-      val trainWithScoreForFixedEffect = trainForFixedEffect.cogroup(scoreGlobal).mapValues{
-        v =>
-          (v._1.head,v._2.head)
-      }
+      val trainWithScoreForFixedEffect = trainForFixedEffect.join(scoreGlobal)
 
       // stage 2 : aggregate gradient from each fixed effect partition/node and figure out the new fixed model in master node
       var newFixedEffectModelGlobal = BDV.zeros[Double](fixedEffectModelGlobal.length)
@@ -534,12 +519,14 @@ object GLMM {
             newModel = ret._1
             newScore = ret._2
           }
+          println(newModel.slice(0,5))
           Iterator.single(newModel,newScore)
       }
       // update random effect model
-      randomEffectModel = newRandomEffectModelAndScore.mapValues(v => v._1)
-      println(randomEffectModel.collect()(1))
-      scoreGlobal = newRandomEffectModelAndScore.flatMap(v => v._2._2)
+      // be careful that intermediate RDD which has dependencies has to be persisted after each transformation ,
+      // otherwise it will be recomputed when action occurs later then
+      randomEffectModel = newRandomEffectModelAndScore.mapValues(v => v._1).partitionBy(randomEffectPartitioner).persist()
+      scoreGlobal = newRandomEffectModelAndScore.flatMap(v => v._2._2).partitionBy(fixedHashPartitioner).persist()
 
       // performance evaluation
       val e = evaluate(validateRdd,fixedEffectModelGlobal,randomEffectType,randomEffectModel.collect(),metric,lossType._1)
@@ -622,7 +609,7 @@ object GLMM {
     // there's only two random effect id , as it's encoded with one-hot
     val randomEffectId = Array[Int](0,1)
     //
-    val model = trainGLMMWithLR(sc,trainRdd,validateRdd,nFeat,randomEffectType,randomEffectId,iter,
+    val model = trainGLMMWithLR(sc,trainRdd,validateRdd,outputDir,nFeat,randomEffectType,randomEffectId,iter,
                                   (alpha0,alpha1),(lambda0,lambda1),(metric,metric_aux),
                                   (regularType,regularType),(lossType,lossType),(method,method))
 

@@ -84,10 +84,14 @@ object ParallelizedLR {
       //println(w)
       val startTime = System.currentTimeMillis()
 
+      val s0 = System.currentTimeMillis()
       val broadcastedModel = train.context.broadcast(w)
+      val e0 = System.currentTimeMillis()
+
       val broadcastedRegularType = train.context.broadcast(regularType)
       val broadcastedLossType = train.context.broadcast(lossType)
 
+      val s1 = System.currentTimeMillis()
       val (newW,_cnt) = train.mapPartitions {
         partition =>
           // update w with sgd in one partition
@@ -119,14 +123,21 @@ object ParallelizedLR {
       broadcastedModel.destroy()
       broadcastedLossType.destroy()
       broadcastedRegularType.destroy()
+      val e1 = System.currentTimeMillis()
 
+      val s2 = System.currentTimeMillis()
       val e = evaluate(validate, w,(metric,"auc"),lossType)
+      val e2 = System.currentTimeMillis()
 
       val endTime = System.currentTimeMillis()
       val timeVar = (endTime - startTime) * 0.001
-      println(f"iter ${i} \t metric[${metric}] ${e._1}%.3f \t metric[auc] ${e._2}%.3f \t time elapse ${timeVar}%.3f(s)")
+      //println(f"iter ${i} \t metric[${metric}] ${e._1}%.3f \t metric[auc] ${e._2}%.3f \t time elapse ${timeVar}%.3f(s)")
 
+      val s3 = System.currentTimeMillis()
       w = newW
+      val e3 = System.currentTimeMillis()
+
+      println(s"t0 ${e0 - s0}\tt1 ${e1 - s1}\tt2 ${e2 - s2}\tt3 ${e3 - s3}")
       i += 1
     }
   }
