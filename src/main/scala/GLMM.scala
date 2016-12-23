@@ -521,12 +521,12 @@ object GLMM {
           }
           println(newModel.slice(0,5))
           Iterator.single(newModel,newScore)
-      }
+      }.persist()
       // update random effect model
       // be careful that intermediate RDD which has dependencies has to be persisted after each transformation ,
       // otherwise it will be recomputed when action occurs later then
-      randomEffectModel = newRandomEffectModelAndScore.mapValues(v => v._1).partitionBy(randomEffectPartitioner).persist()
-      scoreGlobal = newRandomEffectModelAndScore.flatMap(v => v._2._2).partitionBy(fixedHashPartitioner).persist()
+      randomEffectModel = newRandomEffectModelAndScore.mapValues(v => v._1).partitionBy(randomEffectPartitioner)
+      scoreGlobal = newRandomEffectModelAndScore.flatMap(v => v._2._2).partitionBy(fixedHashPartitioner)
 
       // performance evaluation
       val e = evaluate(validateRdd,fixedEffectModelGlobal,randomEffectType,randomEffectModel.collect(),metric,lossType._1)
