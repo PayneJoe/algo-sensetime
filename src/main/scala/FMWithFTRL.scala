@@ -4,7 +4,7 @@
   * This is implementation of FTRL-PROXIMAL algorithm based factorization machine , referring http://www.jmlr.org/proceedings/papers/v15/mcmahan11b/mcmahan11b.pdf
   * authored by google corp.
   */
-package com.sensetime.ad.algo.ctr
+package com.sensetime.ad.algo.ml
 
 object FMWithFTRL {
 

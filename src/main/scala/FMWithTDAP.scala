@@ -8,7 +8,7 @@
   * TDAP is mainly modified on the step size of FTRL, and it not only depends the gradient of current point ,but also relys on current time
   *
   */
-package com.sensetime.ad.algo.ctr
+package com.sensetime.ad.algo.ml
 
 object FMWithTDAP {
 

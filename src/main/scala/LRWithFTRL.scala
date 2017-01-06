@@ -6,7 +6,7 @@
   *   demonstrate that the newer w won't be too far away from previous points and the direction shall not be out of previous directions
   */
 
-package com.sensetime.ad.algo.ctr
+package com.sensetime.ad.algo.ml
 
 object LRWithFTRL {
 

@@ -1,4 +1,4 @@
-package com.sensetime.ad.algo.ctr
+package com.sensetime.ad.algo.ml
 
 /**
   * Created by yuanpingzhou on 11/23/16.

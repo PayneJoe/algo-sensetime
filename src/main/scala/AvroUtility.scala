@@ -4,7 +4,7 @@
   * Avro IO utility :
   * convert libsvm format into specified(schema) avro format
   */
-package com.sensetime.ad.algo
+package com.sensetime.ad.algo.utils
 
 import scala.collection.mutable
 

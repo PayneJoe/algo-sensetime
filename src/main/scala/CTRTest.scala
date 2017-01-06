@@ -1,3 +1,5 @@
+package com.sensetime.ad.algo.test
+
 /**
   * Created by yuanpingzhou on 10/16/16.
   */
@@ -31,10 +33,20 @@ object CTRTest {
     }
 
     def main(args: Array[String]) {
-      val conf = new SparkConf().setMaster("local[*]").setAppName("CTRTest").set("spark.executor.memory","6g")
-      val sc = new SparkContext(conf)
+      if(args.length != 3){
+        println("params: inputFile outputFile")
+        System.exit(1)
+      }
 
-      val ctrRDD = sc.textFile(args(0));
+      val mode = args(0)
+      val inputFile = args(1)
+      val outputFile = args(2)
+
+      val conf = new SparkConf().setMaster(mode).setAppName(this.getClass.getName).set("spark.executor.memory","6g")
+      val sc = new SparkContext(conf)
+      sc.setLogLevel("WARN")
+
+      val ctrRDD = sc.textFile(inputFile);
       println("Total records : " + ctrRDD.count)
 
       //将整个数据集80%作为训练数据，20%作为测试数据集
@@ -127,9 +139,9 @@ object CTRTest {
 
       val model = GradientBoostedTrees.train(ohe_train_rdd, boostingStrategy)
       //保存模型
-      model.save(sc, args(1))
+      model.save(sc, outputFile)
       //加载模型
-      val sameModel = GradientBoostedTreesModel.load(sc,args(1))
+      val sameModel = GradientBoostedTreesModel.load(sc,outputFile)
 
       //将测试数据集做OHE
       val test_rdd = test_raw_rdd.map{ line =>
@@ -170,15 +182,15 @@ object CTRTest {
       predictions.take(10).foreach(println)
       val predictionAndLabel = predictions.zip( ohe_test_rdd.map(_.label))
       val accuracy = 1.0 * predictionAndLabel.filter(x => x._1 == x._2 ).count/ohe_test_rdd.count
-      println("GBTR accuracy " + accuracy)
+      println("accuracy " + accuracy)
       // precision , recall
       val tp = (predictionAndLabel.filter(x => (x._2 == 1 && x._1 == x._2))).count
       val t = (predictionAndLabel.filter(x => x._2 == 1)).count
       val p = (predictionAndLabel.filter(x => x._1 == 1)).count
       val recall = 1.0 * tp/t
-      println("GBDT recall " + recall)
+      println("recall " + recall)
       val precision = 1.0 * tp/p
-      println("GBDT precision" + precision)
+      println("precision" + precision)
       println("Debug info : true positive " + tp + "  true : " + t + "  positive : " + p)
 
     }

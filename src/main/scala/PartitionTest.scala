@@ -1,9 +1,12 @@
-import org.apache.spark.{HashPartitioner, SparkConf, SparkContext}
+package com.sensetime.ad.algo.test
+
 
 /**
   * Created by yuanpingzhou on 11/25/16.
   */
 object PartitionTest {
+  import org.apache.spark.{HashPartitioner, SparkConf, SparkContext}
+
   def main(args: Array[String]) ={
 
     if(args.length < 1) {

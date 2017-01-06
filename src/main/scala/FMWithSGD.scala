@@ -3,7 +3,7 @@
   *
   * parallel sgd algorithm applied in factorization machine
 */
-package com.sensetime.ad.algo.ctr
+package com.sensetime.ad.algo.ml
 
 object FMWithSGD {
   import org.apache.spark.SparkContext

@@ -1,3 +1,5 @@
+package com.sensetime.ad.algo.test
+
 import org.apache.spark.{SparkConf, SparkContext}
 import breeze.linalg.{min, DenseMatrix => BDM, DenseVector => BDV, SparseVector => BSV, Vector => BV, norm => brzNorm}
 import org.apache.spark.rdd.RDD

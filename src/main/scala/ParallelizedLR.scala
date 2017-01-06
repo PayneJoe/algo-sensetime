@@ -4,7 +4,7 @@
   * Created by yuanpingzhou on 10/30/16.
   */
 
-package com.sensetime.ad.algo.ctr
+package com.sensetime.ad.algo.ml
 
 object ParallelizedLR {
 
@@ -213,7 +213,7 @@ object ParallelizedLR {
    */
   def trainLRWithLBFGS(trainRdd: RDD[(Long,LabeledPoint)],validate: RDD[(Long,LabeledPoint)],maxNumIterations: Int = 100,
                        alpha: Double,lambda: Double, metric: String,regularType: String,lossType: String,
-                       numCorrections: Int = 7,convergenceTol: Double = 1e-6) = {
+                       numCorrections: Int = 8,convergenceTol: Double = 1e-6) = {
 
     val startTime = System.currentTimeMillis()
 
