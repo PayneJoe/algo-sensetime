@@ -20,17 +20,29 @@ which may be `Nil` or another `Cons`.
   case class Cons[+A](head: A, tail: List[A]) extends List[A]
 
   object List {
-    // `List` companion object. Contains functions for creating and working with lists.
-
-    def sum(ints: List[Int]): Int = ints match {
-      // A function that uses pattern matching to add up a list of integers
-      case Nil => 0 // The sum of the empty list is 0.
-      case Cons(x, xs) => x + sum(xs) // The sum of a list starting with `x` is `x` plus the sum of the rest of the list.
+    def intSum(nums: List[Int]): Int = {
+      nums match {
+        case Cons(x, xs) => x + intSum(xs)
+        case Nil => 0
+      }
     }
 
-    def apply[A](as: A*): List[A] = // Variadic function syntax
-      if (as.isEmpty) Nil
-      else Cons(as.head, apply(as.tail: _*))
+    def doubleSum(nums: List[Double]): Double = {
+      nums match {
+        case Cons(x, xs) => x + doubleSum(xs)
+        case Nil => 0.0
+      }
+    }
+
+    // List constructor
+    def apply[A](as: A*): List[A] = {
+      if (as.isEmpty) {
+        Nil
+      }
+      else {
+        Cons(as.head, apply(as.tail: _*))
+      }
+    }
 
     def removeLast[A](as: List[A]): List[A] = {
       as match {
@@ -62,15 +74,14 @@ which may be `Nil` or another `Cons`.
 
     def foldRight[A,B](as: List[A],z: B,f: (A,B) => B): B ={
       as match {
-        case Nil => z
         case Cons(h,t) => f(h,foldRight(t,z,f))
+        case Nil => z
       }
     }
 
     def join[A](as: List[List[A]],z: List[A] = Nil)(f: (List[A],List[A]) => List[A]): List[A] = {
       as match {
         case Cons(h,t) => join(t,f(z,h))(f)
-        //case Cons(h,Nil) => f(z,h) //no need here
         case Nil => z
       }
     }
@@ -78,9 +89,99 @@ which may be `Nil` or another `Cons`.
     def append[A](a: List[A] ,b: List[A]): List[A] = {
       a match {
         case Cons(h,t) => Cons(h,append(t,b))
-        //case Cons(h,Nil) => Cons(h,b) // no need here
         case Nil => b
       }
+    }
+
+    def valueConvert[A](as: List[A],f: A => A): List[A] = {
+      as match {
+        case Cons(h,t) => Cons(f(h),valueConvert(t,f))
+        case Nil => Nil
+      }
+    }
+
+    def typeConvert[A](as: List[A],f: A => String): List[String] = {
+      as match {
+        case Cons(h,t) => Cons(f(h),typeConvert(t,f))
+        case Nil => Nil
+      }
+    }
+
+    def filter[A](as: List[A],f: A => Boolean): List[A] = {
+      as match {
+        case Cons(h,t) => {
+          if (f(h) == true){
+            filter(t,f)
+          }
+          else{
+            Cons(h,filter(t,f))
+          }
+        }
+        case Nil => Nil
+      }
+    }
+
+    def flatMap[A,B](as: List[A],f: A => List[B]): List[B] = {
+      as match {
+        case Cons(h,t) => append(f(h),flatMap(t,f))
+        case Nil => Nil
+      }
+    }
+
+    def hasSubsequence[A](sup: List[A],sub: List[A],f: (List[A],List[A]) => Boolean): Boolean ={
+      sup match {
+        case Nil => false
+        case Cons(h,t) => {
+          if(f(sup,sub) == true){
+            true
+          }
+          else {
+            hasSubsequence(t, sub, f)
+          }
+        }
+      }
+    }
+
+    def isPrefix[A](sup: List[A],sub: List[A]): Boolean = {
+      (sup,sub) match {
+        case (_,Nil) => true
+        case (Cons(hp,tp),Cons(hb,tb)) => {
+          if(hp == hb){
+            isPrefix(tp,tb)
+          }
+          else{
+            false
+          }
+        }
+        case _ => false
+      }
+    }
+
+    def equal[A](a: A,b: A): Boolean = {
+      a == b
+    }
+
+    def add[A](a: List[A],b: List[A],f: (A,A) => A): List[A] ={
+      (a,b) match {
+        case (Cons(ha,ta),Cons(hb,tb)) => Cons(f(ha,hb),add(ta,tb,f))
+        case _ => Nil
+      }
+    }
+
+    def tripled(v: Int): List[Double] = {
+      Cons(v.toDouble,Cons(v.toDouble,Cons(v.toDouble,Nil)))
+    }
+
+    def isOdd(v: Int): Boolean = {
+      ((v % 2) == 1)
+    }
+
+    def toString[A](v: A): String = {
+      v.toString
+    }
+
+    def addOne[A](a: Int): Int = {
+      a + 1
     }
 
     def intAdd(a: Int,b: Int): Int = {
@@ -99,17 +200,31 @@ which may be `Nil` or another `Cons`.
       case Cons(x, Cons(2, Cons(4, _))) => x
       case Nil => 42
       case _ => 101
-      case Cons(h, t) => h + List.sum(t)
+      case Cons(h, t) => h + List.intSum(t)
       case Cons(x, Cons(y, Cons(3, Cons(4, _)))) => x + y
     }
     println(s"${ret0}")
 
-    //val ret = List.foldLeft(arr,0,List.intAdd)
-    val ret = List.foldLeft(arr,1,List.intProduct)
-    println(s"${ret}")
+    //val nestedList = List(List(1,2,3),List(4,5,6),List(7,8,9))
+    //println(List.join(nestedList)(List.append))
 
-    val nestedList = List(List(1,2,3),List(4,5,6),List(7,8,9))
-    println(List.join(nestedList)(List.append))
+    //val ret = List.typeConvert(arr,List.toString)
+    //println(ret)
 
+    //val ret = List.filter(arr,List.isOdd)
+    //println(ret)
+
+    //val ret = List.flatMap(arr,List.tripled)
+    //println(ret)
+
+    //val la = List(1,2,3)
+    //val lb = List(4,5,6)
+    //val ret = List.add(la,lb,List.intAdd)
+    //println(ret)
+
+    val lp = List(1,2,3,4,5)
+    val lb = List(5,6)
+    val ret = List.hasSubsequence(lp,lb,List.isPrefix)
+    println(ret)
   }
 }
