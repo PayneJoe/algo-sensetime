@@ -1,6 +1,8 @@
 package com.sensetime.ad.algo.ranking
 
 /**
+  * Ranking client for Recommendation System , sending list request
+  *
   * Created by yuanpingzhou on 1/15/17.
   */
 
@@ -18,7 +20,7 @@ object RankingClient {
 
   def main(args: Array[String]) {
     val httpClient = PooledHttp1Client()
-    val feats = "feat5,feat1,feat7,feat3"
+    val feats = "feat1,feat0,feat2"
     // Handled with circe library , working not well with scala 2.10.*
     // val req = Request(uri = Uri.uri("http://localhost:1024/list_request"), method = Method.POST)
      // .withBody(ListRequest("joe","10101010",1484480518,feats))(jsonEncodeOf)

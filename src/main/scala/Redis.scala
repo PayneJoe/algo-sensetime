@@ -5,66 +5,57 @@ package com.sensetime.ad.algo.utils
   * Created by yuanpingzhou on 1/13/17.
   */
 import redis.clients.jedis.{Jedis, Response}
+import scala.collection.JavaConverters._
 
-class Redis(private val ip: String,private val port: Int) {
+class Redis(private val host: String,private val port: Int) {
 
-  val handle = new Jedis(ip,port)
+  private val handle = new Jedis(host,port)
 
-  def bunchWrite(data: Map[String,Double]) = {
-    val jd = handle
+  // get newest key from a sorted set
+  def getKey(dbNum: Int): String = {
+    val jd = this.handle
+    var modelKey = ""
+    try {
+      jd.select(dbNum)
+      modelKey = jd.zrange("model_index", -1, -1).iterator().next()
+    }
+    catch{
+      case e: Exception =>
+        println(s"Get key for the newest model , unfortunately error : ${e}")
+        jd.disconnect()
+        System.exit(1)
+    }
+    finally {
+      jd.disconnect()
+    }
+    modelKey
+  }
+
+  // get one record with specific db and key
+  def getRecord(dbNum: Int,keyStr: String): Map[String,String] = {
+    val jd = this.handle
     var tryTimes = 3
     var flag = false
+    var tmpResult: Response[java.util.Map[String,String]] = null
     while(tryTimes > 0 && !flag){
       try{
         val pp = jd.pipelined()
-        data.foreach{
-          case (k,v) =>
-            pp.set(k,v.toString)
-        }
+        pp.select(dbNum)
+        tmpResult = pp.hgetAll(keyStr)
         pp.sync()
         flag = true
       }
       catch{
         case e: Exception =>
           flag = false
-          println(s"redis timeout ${e}")
+          println(s"Get the newest model , unfortunately error : ${e}")
           tryTimes -= 1
       }
       finally {
         jd.disconnect()
       }
     }
-  }
-
-  def bunchRead(keys: Array[String]): Map[String,Response[String]] = {
-
-    val jd = handle
-    var tmpResult = Map[String, Response[String]]()
-    var tryTimes = 3
-    var flag = false
-    while(tryTimes > 0 && !flag) {
-      try{
-        val pp = jd.pipelined()
-        var i = 0
-        while(i < keys.length){
-          tmpResult ++= Map(keys(i) -> pp.get(keys(i)))
-          i += 1
-        }
-        pp.sync()
-        flag = true
-      }catch {
-        case e: Exception => {
-          flag = false
-          println("Redis-Timeout" + e)
-          tryTimes = tryTimes - 1
-        }
-      }finally{
-        jd.disconnect()
-      }
-    }
-
-    tmpResult
-
+    tmpResult.get().asScala.toMap
   }
 
   def disconnect() ={
