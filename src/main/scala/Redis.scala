@@ -4,7 +4,9 @@ package com.sensetime.ad.algo.utils
 /**
   * Created by yuanpingzhou on 1/13/17.
   */
+import com.sensetime.ad.algo.utils.ExceptionPool.RankingException
 import redis.clients.jedis.{Jedis, Response}
+
 import scala.collection.JavaConverters._
 
 class Redis(private val host: String,private val port: Int) {
@@ -21,14 +23,19 @@ class Redis(private val host: String,private val port: Int) {
     }
     catch{
       case e: Exception =>
-        println(s"Get key for the newest model , unfortunately error : ${e}")
-        jd.disconnect()
-        System.exit(1)
+        //  DEBUG
+        // println(e.getMessage)
     }
     finally {
-      jd.disconnect()
+      // TODO
     }
-    modelKey
+    // assert result
+    if((modelKey == null) || modelKey.isEmpty){
+      throw new RankingException("get key failed")
+    }
+    else {
+      modelKey
+    }
   }
 
   // get one record with specific db and key
@@ -37,6 +44,7 @@ class Redis(private val host: String,private val port: Int) {
     var tryTimes = 3
     var flag = false
     var tmpResult: Response[java.util.Map[String,String]] = null
+    // try more times
     while(tryTimes > 0 && !flag){
       try{
         val pp = jd.pipelined()
@@ -48,14 +56,19 @@ class Redis(private val host: String,private val port: Int) {
       catch{
         case e: Exception =>
           flag = false
-          println(s"Get the newest model , unfortunately error : ${e}")
           tryTimes -= 1
       }
       finally {
-        jd.disconnect()
+        // TODO
       }
     }
-    tmpResult.get().asScala.toMap
+    // assert result
+    if((tmpResult == null) || (tmpResult.get().size() == 0)){
+      throw new RankingException("get row failed")
+    }
+    else {
+      tmpResult.get().asScala.toMap
+    }
   }
 
   def disconnect() ={
