@@ -1,2 +1,2 @@
 # algo-sensetime
-Algorithms mainly written in scala are developed @SenseTime
+Algorithms mainly written in scala(2.10+) are developed @SenseTime
