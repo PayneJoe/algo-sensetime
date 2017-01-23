@@ -5,9 +5,11 @@ package com.sensetime.ad.algo.utils
   * Created by yuanpingzhou on 1/13/17.
   */
 import com.sensetime.ad.algo.utils.ExceptionPool.RankingException
-import redis.clients.jedis.{Jedis, Response}
 
+import redis.clients.jedis.{Jedis, Response}
 import scala.collection.JavaConverters._
+
+import breeze.linalg.{DenseVector => BDV}
 
 class Redis(private val host: String,private val port: Int) {
 
@@ -68,6 +70,35 @@ class Redis(private val host: String,private val port: Int) {
     }
     else {
       tmpResult.get().asScala.toMap
+    }
+  }
+
+  def insertSortedRecord(dbNum: Int,sortedKey: Long,recordKey: String,model: BDV[Double],features: List[String]) = {
+    val jd = this.handle
+    var tryTimes = 4
+    var flag = false
+    val indexedModel = features.zip(model.toArray.map(_.toString))
+    // try more times
+    while(tryTimes > 0 && !flag){
+      try{
+        val pp = jd.pipelined()
+        pp.select(dbNum)
+        pp.zadd("model_index",sortedKey,recordKey)
+        pp.hmset(recordKey,indexedModel.toMap.asJava)
+        pp.sync()
+        flag = true
+      }
+      catch{
+        case e: Exception =>
+          flag = false
+          if(tryTimes == 1){
+            throw new RankingException("insert 3 times , unfortunately all failed .")
+          }
+          tryTimes -= 1
+      }
+      finally {
+        // TODO
+      }
     }
   }
 

@@ -25,18 +25,20 @@ object GLMM {
     *
     * @return two metrics
    */
-  def evaluate(data: RDD[(Long,LabeledPoint)],fixedEffectModel: BDV[Double],
-               randomEffectType: Int,randomEffectModel: Array[(Int,BDV[Double])],mode: (String,String),lossType: String): (Double,Double) = {
+  def evaluate(data: RDD[(Long,(String,LabeledPoint))],fixedEffectModel: BDV[Double],
+               randomEffectModel: Array[(String,BDV[Double])],mode: (String,String),lossType: String): (Double,Double) = {
 
     var ret1 = .0
     var ret2 = .0
 
-    val y_true = BDV(data.map(x => x._2.label).collect())
+    val y_true = BDV(data.map(x => x._2._2.label).collect())
     val y_predict = BDV(data.map{
-      case (uid,lp) =>
+      case (uid,pair) =>
+        val lp = pair._2
+        val reid = pair._1
         val x = BDV(lp.features.toArray)
         val y = lp.label
-        val score = computeScore(x,randomEffectType,fixedEffectModel,randomEffectModel.toMap)
+        val score = computeScore(x,fixedEffectModel,randomEffectModel.toMap.get(reid).get)
         score
     }.collect())
 
@@ -85,7 +87,7 @@ object GLMM {
    *
    * @return updated model
    */
-  def updateFixedEffectModelWithSGD(data: RDD[(Long,(LabeledPoint,Double))],model: BDV[Double],
+  def updateFixedEffectModelWithSGD(data: RDD[(Long,((String,LabeledPoint),Double))],model: BDV[Double],
                                     alpha: Double,lambda: Double,regularType: String,lossType: String): BDV[Double] = {
 
     val broadcastedModel = data.context.broadcast(model)
@@ -104,8 +106,8 @@ object GLMM {
         val sumGradSqure = BDV.zeros[Double](localModel.length)
         partition.foreach{
           case (uid,(lp,oldScore)) =>
-            val x = BDV(lp.features.toArray)
-            val y = lp.label
+            val x = BDV(lp._2.features.toArray)
+            val y = lp._2.label
 
             val score = updateScore(oldScore,x,localModel,newLocalModel,localLossType)
             val (grad,_) = Optimization.computeGradient(x,y,score,localLossType)
@@ -271,17 +273,15 @@ object GLMM {
    *  score = x * fixedEffectModel + x' * randomEffectModel
    *
    */
-  def computeScore(x: BDV[Double],randomEffectType: Int,fixedEffectModel: BDV[Double],
-                    randomEffectModel: Map[Int,BDV[Double]]): Double = {
-
-    val remainedIndex = ((0 to (randomEffectType - 2)).++((randomEffectType to (x.length - 1))))
+  def computeScore(x: BDV[Double],fixedEffectModel: BDV[Double],randomEffectModel: BDV[Double]): Double = {
+    /*val remainedIndex = ((0 to (randomEffectType - 2)).++((randomEffectType to (x.length - 1))))
     val rex = x(remainedIndex)
     val reid = x(randomEffectType - 1).toInt
     val fixedEffect = (x :* fixedEffectModel).sum
     val randomEffect = (rex :* randomEffectModel.get(reid).get).sum
     val effect = fixedEffect + randomEffect
-
-    effect
+    */
+    x.dot(fixedEffectModel) + x.dot(randomEffectModel)
   }
 
   /*
@@ -290,7 +290,7 @@ object GLMM {
    *
    */
   private class CostFunForFixedEffect(
-                         data: RDD[(Long,(LabeledPoint,Double))],
+                         data: RDD[(Long,((String,LabeledPoint),Double))],
                          initialModel: BDV[Double],
                          regParam: Double,
                          nInstance: Long,
@@ -307,10 +307,10 @@ object GLMM {
       val broadcatedModel = data.context.broadcast(model)
       val broadcastedLossType = data.context.broadcast(lossType)
 
-      val seqOp = (c: (BDV[Double], Double), v: (Long,(LabeledPoint,Double))) =>
+      val seqOp = (c: (BDV[Double], Double), v: (Long,((String,LabeledPoint),Double))) =>
         (c, v) match {
           case ((grad, loss), (uid, ld)) =>
-            val lp = ld._1
+            val lp = ld._1._2
             val label = lp.label
             val features = BDV(lp.features.toArray)
             val initialScore = ld._2
@@ -370,7 +370,7 @@ object GLMM {
    *
    */
   def updateFixedEffectModelWithLBFGS(
-                                       data: RDD[(Long,(LabeledPoint,Double))],nInstance: Long,
+                                       data: RDD[(Long,((String,LabeledPoint),Double))],nInstance: Long,
                                        model: BDV[Double],lambda: Double,regularType: String,lossType: String,
                                        maxIterNum: Int,numCorrections: Int,convergenceTol: Double): BDV[Double] = {
 
@@ -393,11 +393,11 @@ object GLMM {
   /*
     * train GLMM with logic regression while GLMM includes one fixed effect model and one random effect model
    */
-  def trainGLMMWithLR(sc: SparkContext,trainRdd: RDD[(Long,LabeledPoint)],validateRdd: RDD[(Long,LabeledPoint)],outputDir: String,nFeat: Int,
-                      randomEffectType: Int,randomEffectId: Array[Int],iter: Int,alpha: (Double,Double),
+  def trainGLMMWithLR(sc: SparkContext,trainRdd: RDD[(Long,(String,LabeledPoint))],validateRdd: RDD[(Long,(String,LabeledPoint))],
+                      outputDir: String,nFeat: Int,randomEffectId: Array[String],iter: Int,alpha: (Double,Double),
                       lambda: (Double,Double),metric: (String,String),regularType: (String,String),lossType: (String,String),method: (String,String),
                       maxLBFGSIterNum: Int = 100,numCorrections: Int = 7,convergenceTol: Double = 1e-6):
-                        (BDV[Double],Array[(Int,BDV[Double])]) ={
+                        (BDV[Double],Map[String,BDV[Double]]) ={
 
     // checking point directory
     sc.setCheckpointDir(outputDir)
@@ -405,6 +405,7 @@ object GLMM {
     val nInstance = trainRdd.count()
     val train = trainRdd
 
+    println(s"Instance number of training is ${nInstance}")
     // initialize fixed effect model with Gaussian
     val rand = breeze.stats.distributions.Gaussian(0, 0.1)
     var fixedEffectModelGlobal = BDV.rand(nFeat,rand)
@@ -412,17 +413,16 @@ object GLMM {
 
     //  initialize random effect model indexed by random effect id
     val randomEffectSize = randomEffectId.length
-    val randomEffectModelGlobal = HashMap[Int,BDV[Double]]()
+    val randomEffectModelGlobal = HashMap[String,BDV[Double]]()
     var k = 0.toInt
     while(k < randomEffectSize){
-      randomEffectModelGlobal.put(randomEffectId(k),BDV.rand[Double](nFeat - 1,rand))
+      randomEffectModelGlobal.put(randomEffectId(k),BDV.rand[Double](nFeat,rand))
       k += 1
     }
 
     // keep randomEffectModel reside in certain nodes
     val randomEffectPartitioner = new HashPartitioner(randomEffectSize)
-    var randomEffectModel = sc.parallelize(randomEffectModelGlobal.toSeq) // need to be sequence type of data , HashMap is not permitted
-    randomEffectModel = randomEffectModel.partitionBy(randomEffectPartitioner).persist()
+    var randomEffectModel = sc.parallelize(randomEffectModelGlobal.toSeq).partitionBy(randomEffectPartitioner).persist() // need to be sequence type of data , HashMap is not permitted
 
     // broadcast initialized fixed model and random effect model to each nodes , which will save a lot of cost for network I/O
     val broadcastRandomEffectModelGlobal = train.context.broadcast(randomEffectModelGlobal.toMap)
@@ -435,9 +435,13 @@ object GLMM {
         partition.map {
           record =>
             val uid = record._1
-            val lp = record._2
+            val lp = record._2._2
+            val reid = record._2._1
             val x = BDV(lp.features.toArray)
-            val score = computeScore(x, randomEffectType, localFixedEffectModel, localRandomEffectModel)
+            if(randomEffectId.contains(reid) == false){
+              println("----------" + reid)
+            }
+            val score = computeScore(x, localFixedEffectModel, localRandomEffectModel.get(reid).get)
             (uid, score)
         }
     }.partitionBy(fixedHashPartitioner).persist()
@@ -448,7 +452,6 @@ object GLMM {
     val trainForFixedEffect = train.partitionBy(fixedHashPartitioner).persist()
 
     var i = 0.toInt
-    val historyMetrics = ArrayBuffer[Double]()
     while (i < iter) {
       //println(fixedEffectModelGlobal)
 
@@ -480,19 +483,21 @@ object GLMM {
           val localNewFixedModel = newBroadcastFixedModel.value
           partition.map {
             case (uid, pair) =>
-              val lp = pair._1
+              val lp = pair._1._2
               val oldScore = pair._2
               val x = BDV(lp.features.toArray)
-              val newScore = oldScore - (x :* localOldFixedModel).sum + (x :* localNewFixedModel).sum
+              val newScore = oldScore - x.dot(localOldFixedModel) + x.dot(localNewFixedModel)
 
-              val y = lp.label
-              val remainedIndex = (0 to (randomEffectType - 2)).++((randomEffectType to (x.length - 1)))
-              val newx = x(remainedIndex)
-              val reid = x(randomEffectType - 1).toInt
-              (reid,(uid,(LabeledPoint(y,Vectors.dense(newx.toArray)),newScore)))
+              (pair._1._1,(uid,(lp,newScore)))
           }
       }.partitionBy(randomEffectPartitioner)
       fixedEffectModelGlobal = newFixedEffectModelGlobal //  update fixed effect model in master node
+      //println(fixedEffectModelGlobal.slice(0,5))
+      val ret = trainWithScoreForRandomEffect.mapPartitions(
+        iter =>
+          Array(iter.size).iterator, true
+      ).collect()
+      println(s"Data distribution for random effect : ${ret.toList}")
 
       // stage 4 : training data preparation for random effect model , training data is hashed by random effect type
       //            as random effect model does
@@ -519,17 +524,17 @@ object GLMM {
             newModel = ret._1
             newScore = ret._2
           }
-          println(newModel.slice(0,5))
+          //println(newModel.slice(0,5))
           Iterator.single(newModel,newScore)
-      }.persist()
+      }
       // update random effect model
       // be careful that intermediate RDD which has dependencies has to be persisted after each transformation ,
       // otherwise it will be recomputed when action occurs later then
-      randomEffectModel = newRandomEffectModelAndScore.mapValues(v => v._1).partitionBy(randomEffectPartitioner)
-      scoreGlobal = newRandomEffectModelAndScore.flatMap(v => v._2._2).partitionBy(fixedHashPartitioner)
+      randomEffectModel = newRandomEffectModelAndScore.mapValues(v => v._1).partitionBy(randomEffectPartitioner).persist()
+      scoreGlobal = newRandomEffectModelAndScore.flatMap(v => v._2._2).partitionBy(fixedHashPartitioner).persist()
 
       // performance evaluation
-      val e = evaluate(validateRdd,fixedEffectModelGlobal,randomEffectType,randomEffectModel.collect(),metric,lossType._1)
+      val e = evaluate(validateRdd,fixedEffectModelGlobal,randomEffectModel.collect(),metric,lossType._1)
 
       val endTime = System.currentTimeMillis()
       val timeVal = (endTime - startTime) * 0.001
@@ -538,7 +543,7 @@ object GLMM {
       i += 1
     }
 
-    (fixedEffectModelGlobal,randomEffectModel.collect())
+    (fixedEffectModelGlobal,randomEffectModel.collect().toMap)
   }
 
   /*
@@ -602,14 +607,17 @@ object GLMM {
     val (randomEffectType, nFeat) = selectRandomEffectWithSparsity(trainRawData)
     println(s"Selected random effect is ${randomEffectType} , the size of feature space is ${nFeat}")
 
+    val features = (1 to nFeat).map(_.toString).toList
     // transform raw data into LabelPoint format
-    val trainRdd = Data.formatData(trainRawData, nFeat,lossType)
-    val validateRdd = Data.formatData(validateRawData,nFeat,lossType)
+    val trainRdd = Data.formatDataWithRandomEffectId(trainRawData, features,randomEffectType.toString,lossType)
+    val validateRdd = Data.formatDataWithRandomEffectId(validateRawData,features,randomEffectType.toString,lossType)
+
+   // trainRdd.take(10).foreach(println)
 
     // there's only two random effect id , as it's encoded with one-hot
-    val randomEffectId = Array[Int](0,1)
+    val randomEffectId = Array[String](0.toString,1.toString)
     //
-    val model = trainGLMMWithLR(sc,trainRdd,validateRdd,outputDir,nFeat,randomEffectType,randomEffectId,iter,
+    val model = trainGLMMWithLR(sc,trainRdd,validateRdd,outputDir,nFeat - 1,randomEffectId,iter,
                                   (alpha0,alpha1),(lambda0,lambda1),(metric,metric_aux),
                                   (regularType,regularType),(lossType,lossType),(method,method))
 

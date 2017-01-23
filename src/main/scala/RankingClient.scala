@@ -34,6 +34,7 @@ object RankingClient {
     }
     catch {
       case e: Exception =>
+        httpClient.shutdownNow()
         println(s"send message error : ${e.getMessage}")
     }
     finally {

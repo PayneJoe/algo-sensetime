@@ -20,6 +20,14 @@ object OrientedObject {
     def getInstance = new Brain
   }
 
+  abstract class Animal {
+    val greeting = { println("Animal"); "Hello" }
+  }
+
+  class Dog extends Animal {
+    override val greeting = { println("Dog"); "Woof" }
+  }
+
   def main(args: Array[String]) = {
     // customer-defined constructor for case class
     val p0 = Person()

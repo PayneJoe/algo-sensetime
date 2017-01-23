@@ -35,6 +35,7 @@ object RankingServer extends ServerApp {
   private val userInfoDBNum = 3
   private val featureInfoDBNum = 4
 
+
   private def loadData (dbNum: Int,keyStr : String = ""): (Map[String,String]) = {
 
     val dbHandle = new Redis(this.host,this.port)

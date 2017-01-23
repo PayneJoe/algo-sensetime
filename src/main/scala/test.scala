@@ -46,5 +46,10 @@ object test {
     val _b = signum(b)
     val c = ((_a :* _b).toArray.filter(_>0).sum * 1.0)/_a.length
     println(c)
+
+    "abc" match{
+      case "abc" => println("-------")
+      case "fdsf" => println("+++++++++++")
+    }
   }
 }
