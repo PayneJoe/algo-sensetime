@@ -1,18 +1,19 @@
 package com.sensetime.ad.dm.model
 
 /**
-  * Compute broadcaster similarity through cosine in cluster mode with resources consumed intensively.
+  * Compute broadcaster similarity through inner multiplication in standalone mode, since resources would be intensely
+  * consumed in cluster while transposing matrix before computing cosine similarity.
   *
   * Created by yuanpingzhou on 2/22/17.
   */
-object BroadcasterSimilarity {
+object BroadcasterSimilarityStandalone {
 
   import org.apache.spark.{SparkConf, SparkContext}
-  import org.apache.spark.mllib.linalg.distributed.{IndexedRow, IndexedRowMatrix, MatrixEntry, RowMatrix}
   import org.apache.spark.sql.hive.HiveContext
-  import org.apache.spark.mllib.linalg.Vectors
+  import org.apache.spark.mllib.linalg.distributed.{IndexedRow, IndexedRowMatrix, MatrixEntry, RowMatrix}
 
   import scala.util.{Failure, Success, Try}
+  import breeze.linalg.{DenseVector => BDV}
   import scopt.OptionParser
 
   import com.sensetime.ad.dm.utils._
@@ -50,7 +51,7 @@ object BroadcasterSimilarity {
         """
           |For example, the following command runs this app on hive dataset:
           |
-          | ./bin/spark-submit  --class  com.sensetime.ad.dm.model.BroadcasterSimilarity\
+          | ./bin/spark-submit  --class  com.sensetime.ad.dm.model.BroadcasterSimilarityStandalone \
           | recommendation-2.1.3.jar \
           | --redisHost 10.0.8.81 --redisPort 6379 --redisDB 10 --hiveDBName dm --hiveTableName dm_broadcaster_info
         """.stripMargin)
@@ -73,9 +74,9 @@ object BroadcasterSimilarity {
 
     // load data
     // feature space construction
-    val userFeatures = sqlContext.sql(s"select * from ${params.hiveTableName}").map{
+    val userFeatures = sqlContext.sql(s"select * from ${params.hiveTableName}").map(
       v => {
-        val featVec = Array.fill[Double](39)(0)
+        val featVec = BDV.zeros[Double](39)
         val userId = v.getString(0)
         var idx = 1
         // gender 3
@@ -137,65 +138,44 @@ object BroadcasterSimilarity {
           case enableRate: Double if ((enableRate >= 50) && (enableRate < 100)) => featVec(idx + 4 - 1) = 1.0
           case enableRate: Double if (enableRate >= 100) => featVec(idx + 5 - 1) = 1.0
         }
-        //Row.fromSeq(Array[Any](userId,featVec.toSeq))
-        (userId, Vectors.dense(featVec.toArray))
+        (userId, featVec)
       }
-    }.toJavaRDD.rdd.persist()
+    ).toJavaRDD.rdd.cache() // better cached
+    val users = userFeatures.map(_._1).collect() // collect into master node
+    val features = userFeatures.map(_._2).collect() // collect into master node
 
-    // retrieve users and features
-    val users = userFeatures.map(_._1).zipWithIndex().collect().map(v => (v._2,v._1)).toMap // collect users into master node
-    val features = userFeatures.map(_._2)
-
-    // ------ transpose matrix
-    // * option one
-    //    val featMatrix = new RowMatrix(features)
-    //    val tFeatMatrix = transposeRowMatrix(featMatrix)
-    // * option two
-    //convert that RDD to an RDD[IndexedRow]
-    val indexedFeature = features.zipWithIndex.map{
-      case(value, index) => IndexedRow(index, value)
-    }
-    //make a matrix
-    val indexedFeatMatrix = new IndexedRowMatrix(indexedFeature)
-    //calculate the distributions
-    val tFeatMatrix = indexedFeatMatrix.toCoordinateMatrix.transpose().toIndexedRowMatrix()
-    // ------
-
-    // compute similarity with cosine
-    val simMatrix = tFeatMatrix.columnSimilarities().entries.map{
-      case MatrixEntry(i, j, u) => ((i, j), u)
-    }
-    val bUsers = simMatrix.context.broadcast(users)
-    simMatrix.foreachPartition(
-      partition => {
-        val dbHandle = new Redis(params.redisHost,params.redisPort)
-        val userMap = bUsers.value
-        val block0 = partition.map{
-          case row =>{
-            val aUser = "BORADCASTER_SIMILARITY:%s".format(userMap.getOrElse(row._1._1,""))
-            val bUser = "%s".format(userMap.getOrElse(row._1._2,""))
-            ((aUser,bUser),row._2)
+    var i = 0
+    var count = 0
+    while (i < users.length) {
+      val aUser = users(i)
+      val aFeat = features(i)
+      var j = i + 1
+      var simVec = Map[String, Double]()
+      val dbHandle = new Redis(params.redisHost, params.redisPort)
+      while (j < users.length) {
+        val bUser = users(j)
+        val bFeat = features(j)
+        val sim = aFeat.dot(bFeat)
+        simVec ++= Map(bUser -> sim)
+        j += 1
+      }
+      // get the top20
+      val sortedSimVec = simVec.toSeq.sortBy(_._2).slice(simVec.size - 20, simVec.size).toMap
+      Try(dbHandle.insertHashRecord(params.redisDB, s"BORADCASTER_SIMILARITY:${aUser}", sortedSimVec)) match {
+        case Success(v) => {
+          dbHandle.disconnect()
+          count += 1
+          if (count % 1000 == 0) {
+            println(s"Insert broadcaster similarity ${count} records.")
           }
-        }.toList
-        // TODO, can not be re-traversed
-        val block1 = partition.map{
-          case row =>{
-            val aUser = userMap.getOrElse(row._1._1,"")
-            val bUser = "BORADCASTER_SIMILARITY:%s".format(userMap.getOrElse(row._1._2,""))
-            ((bUser,aUser),row._2)
-          }
-        }.toList
-        val block = block0 ++ block1
-        Try(dbHandle.insertMultHashField(params.redisDB,block)) match{
-          case Success(v) =>
-            dbHandle.disconnect()
-            println("Insert similarity success .")
-          case Failure(msg) =>
-            dbHandle.disconnect()
-            println(s"Insert similarity failed : ${msg.getMessage}")
+        }
+        case Failure(v) => {
+          dbHandle.disconnect()
+          println("Insert broadcaster similarity failed .")
         }
       }
-    )
+      i += 1
+    }
     sc.stop()
   }
 }

@@ -95,8 +95,79 @@ class Redis(private val host: String,private val port: Int) {
         pp.select(dbNum)
         records.foreach{
           case (aUser,neighbors) =>{
-            val fields = neighbors.map(t => (t._1,t.toString())).toArray
+            val fields = neighbors.mapValues(_.toString).toList
             pp.hmset(aUser,fields.toMap.asJava)
+          }
+        }
+        pp.sync()
+        flag = true
+      }
+      catch{
+        case e: Exception =>
+          flag = false
+          if(tryTimes == 1){
+            throw new RankingException("insert 3 times , unfortunately all failed .")
+          }
+          tryTimes -= 1
+      }
+      finally {
+        // TODO
+      }
+    }
+  }
+
+  /*
+   * Insert hash record
+   * @dbNum: database number
+   * @key: row key
+   * @record: Map(field -> value)
+   *
+   */
+  def insertHashRecord[T](dbNum: Int,key: String,record: Map[String,T]) = {
+    val jd = this.handle
+    var tryTimes = 4
+    var flag = false
+    // try more times
+    while(tryTimes > 0 && !flag){
+      try{
+        val pp = jd.pipelined()
+        pp.select(dbNum)
+        pp.hmset(key,record.mapValues(_.toString).toList.toMap.asJava)
+        pp.sync()
+        flag = true
+      }
+      catch{
+        case e: Exception =>
+          flag = false
+          if(tryTimes == 1){
+            throw new RankingException("insert 3 times , unfortunately all failed .")
+          }
+          tryTimes -= 1
+      }
+      finally {
+        // TODO
+      }
+    }
+  }
+
+  /*
+   * insert multiple hash fields
+   * @dbNum : database number
+   * @records : List((key,field) -> value)
+   *
+   */
+  def insertMultHashField[T](dbNum: Int,fields: List[((String,String),T)]) = {
+    val jd = this.handle
+    var tryTimes = 4
+    var flag = false
+    // try more times
+    while(tryTimes > 0 && !flag){
+      try{
+        val pp = jd.pipelined()
+        pp.select(dbNum)
+        fields.foreach{
+          case (k,v) => {
+            pp.hset(k._1,k._2,v.toString)
           }
         }
         pp.sync()
